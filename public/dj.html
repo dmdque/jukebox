@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jukebox - DJ Dashboard</title>
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+</head>
+<body>
+<div class="container wide">
+  <!-- Create Session -->
+  <div id="createView">
+    <h1>🎧 DJ Dashboard</h1>
+    <input id="sessName" type="text" placeholder="Session name (e.g. Monday Jazz Night)">
+    <input id="sessPin" type="password" placeholder="Set a PIN (for managing requests)">
+    <button id="createBtn">Create Session</button>
+    <div id="createError" class="flash flash-error hidden" style="margin-top:12px;"></div>
+  </div>
+
+  <!-- Active Session -->
+  <div id="sessionView" class="hidden">
+    <h1 id="djSessionName"></h1>
+    <div class="session-code" id="djCode"></div>
+    <div class="qr-wrap" id="qrWrap"></div>
+    <div class="stats" id="stats"></div>
+    <label class="toggle">
+      <input type="checkbox" id="activeToggle" checked>
+      <span>Accepting requests</span>
+    </label>
+
+    <div id="djNowPlaying" class="card now-playing hidden">
+      <div class="label">Now Playing</div>
+      <div class="song-title" id="djNpSong"></div>
+      <div class="song-artist" id="djNpArtist"></div>
+      <div class="actions">
+        <button class="btn-sm" id="markPlayedBtn">✓ Mark as Played</button>
+      </div>
+    </div>
+
+    <h2>Queue</h2>
+    <div id="djQueue"></div>
+
+    <div class="played-section" style="margin-top:20px;">
+      <details id="djPlayedSection" class="hidden">
+        <summary class="muted" style="cursor:pointer;">Already Played / Skipped</summary>
+        <div id="djPlayed" style="margin-top:8px;"></div>
+      </details>
+    </div>
+  </div>
+</div>
+<script>
+let currentSession = null;
+let pin = '';
+let requests = [];
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+document.getElementById('createBtn').addEventListener('click', async () => {
+  const name = document.getElementById('sessName').value.trim();
+  pin = document.getElementById('sessPin').value;
+  if (!pin) { showError('PIN is required'); return; }
+  const res = await fetch('/api/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, pin })
+  });
+  if (!res.ok) { showError('Failed to create session'); return; }
+  currentSession = await res.json();
+  showSession();
+});
+
+function showError(msg) {
+  const el = document.getElementById('createError');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function showSession() {
+  document.getElementById('createView').classList.add('hidden');
+  document.getElementById('sessionView').classList.remove('hidden');
+  document.getElementById('djSessionName').textContent = currentSession.name || '🎵 Session';
+  document.getElementById('djCode').textContent = currentSession.id;
+
+  // QR code
+  const url = window.location.origin + '/s/' + currentSession.id;
+  const qr = qrcode(0, 'M');
+  qr.addData(url);
+  qr.make();
+  document.getElementById('qrWrap').innerHTML = qr.createImgTag(6, 8);
+
+  loadDjRequests();
+  setInterval(loadDjRequests, 5000);
+}
+
+async function loadDjRequests() {
+  const res = await fetch('/api/sessions/' + currentSession.id + '/requests');
+  requests = await res.json();
+  renderDj();
+}
+
+function renderDj() {
+  const np = requests.find(r => r.status === 'playing');
+  const queued = requests.filter(r => r.status === 'queued');
+  const done = requests.filter(r => r.status === 'played' || r.status === 'skipped');
+  const uniqueRequesters = new Set(requests.map(r => r.requester_id)).size;
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="num">${requests.length}</div><div class="lbl">Requests</div></div>
+    <div class="stat"><div class="num">${uniqueRequesters}</div><div class="lbl">People</div></div>
+  `;
+
+  const npEl = document.getElementById('djNowPlaying');
+  if (np) {
+    npEl.classList.remove('hidden');
+    document.getElementById('djNpSong').textContent = np.song;
+    document.getElementById('djNpArtist').textContent = np.artist || '';
+    document.getElementById('markPlayedBtn').onclick = () => updateStatus(np.id, 'played');
+  } else {
+    npEl.classList.add('hidden');
+  }
+
+  document.getElementById('djQueue').innerHTML = queued.length ? queued.map(r => `
+    <div class="card">
+      <div class="song-title">${esc(r.song)}</div>
+      ${r.artist ? `<div class="song-artist">${esc(r.artist)}</div>` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+        <span class="muted">▲ ${r.votes} vote${r.votes !== 1 ? 's' : ''}</span>
+        <div class="actions">
+          <button class="btn-sm" onclick="updateStatus(${r.id},'playing')">▶ Play</button>
+          <button class="btn-sm btn-skip" onclick="updateStatus(${r.id},'skipped')">Skip</button>
+          <button class="btn-sm btn-delete" onclick="deleteReq(${r.id})">✕</button>
+        </div>
+      </div>
+    </div>
+  `).join('') : '<p class="muted">No requests yet. Share the QR code!</p>';
+
+  const playedSection = document.getElementById('djPlayedSection');
+  if (done.length) {
+    playedSection.classList.remove('hidden');
+    document.getElementById('djPlayed').innerHTML = done.map(r => `
+      <div class="card">
+        <div class="song-title">${esc(r.song)}</div>
+        ${r.artist ? `<div class="song-artist">${esc(r.artist)}</div>` : ''}
+        <span class="muted">${r.status === 'skipped' ? 'Skipped' : 'Played'}</span>
+      </div>
+    `).join('');
+  } else {
+    playedSection.classList.add('hidden');
+  }
+}
+
+async function updateStatus(id, status) {
+  await fetch('/api/requests/' + id, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-Pin': pin },
+    body: JSON.stringify({ status })
+  });
+  loadDjRequests();
+}
+
+async function deleteReq(id) {
+  await fetch('/api/requests/' + id, {
+    method: 'DELETE',
+    headers: { 'X-Pin': pin }
+  });
+  loadDjRequests();
+}
+
+document.getElementById('activeToggle').addEventListener('change', async (e) => {
+  await fetch('/api/sessions/' + currentSession.id, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-Pin': pin },
+    body: JSON.stringify({ active: e.target.checked })
+  });
+});
+</script>
+</body>
+</html>

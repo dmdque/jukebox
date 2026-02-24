@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jukebox - Request</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="container">
+  <div id="error" class="hidden" style="text-align:center;padding-top:80px;">
+    <h1>😕 Session Not Found</h1>
+    <p class="muted" style="margin-top:12px;"><a href="/">Go back</a></p>
+  </div>
+  <div id="main" class="hidden">
+    <h1 id="sessionName">🎵 Jukebox</h1>
+    <div id="nowPlaying" class="card now-playing hidden">
+      <div class="label">Now Playing</div>
+      <div class="song-title" id="npSong"></div>
+      <div class="song-artist" id="npArtist"></div>
+    </div>
+    <div id="requestForm">
+      <div id="flash" class="flash flash-info hidden"></div>
+      <input id="song" type="text" placeholder="Song name *" required>
+      <input id="artist" type="text" placeholder="Artist (optional)">
+      <button id="submitBtn" type="button">Request Song</button>
+    </div>
+    <div id="closedMsg" class="card hidden" style="text-align:center;">
+      <p>🚫 Requests are closed</p>
+    </div>
+    <h2 style="margin-top:20px;">Queue</h2>
+    <div id="queue"></div>
+    <div class="played-section">
+      <details id="playedSection" class="hidden">
+        <summary class="muted" style="cursor:pointer;">Already Played</summary>
+        <div id="played" style="margin-top:8px;"></div>
+      </details>
+    </div>
+  </div>
+</div>
+<script>
+const sessionId = window.location.pathname.split('/s/')[1];
+let requests = [];
+
+async function loadSession() {
+  const res = await fetch('/api/sessions/' + sessionId);
+  if (!res.ok) { document.getElementById('error').classList.remove('hidden'); return; }
+  const s = await res.json();
+  document.getElementById('main').classList.remove('hidden');
+  document.getElementById('sessionName').textContent = s.name || '🎵 Jukebox';
+  if (s.active) {
+    document.getElementById('requestForm').classList.remove('hidden');
+    document.getElementById('closedMsg').classList.add('hidden');
+  } else {
+    document.getElementById('requestForm').classList.add('hidden');
+    document.getElementById('closedMsg').classList.remove('hidden');
+  }
+  loadRequests();
+}
+
+async function loadRequests() {
+  const res = await fetch('/api/sessions/' + sessionId + '/requests');
+  requests = await res.json();
+  render();
+}
+
+function render() {
+  const np = requests.find(r => r.status === 'playing');
+  const queued = requests.filter(r => r.status === 'queued');
+  const done = requests.filter(r => r.status === 'played' || r.status === 'skipped');
+
+  const npEl = document.getElementById('nowPlaying');
+  if (np) {
+    npEl.classList.remove('hidden');
+    document.getElementById('npSong').textContent = np.song;
+    document.getElementById('npArtist').textContent = np.artist || '';
+  } else {
+    npEl.classList.add('hidden');
+  }
+
+  document.getElementById('queue').innerHTML = queued.length ? queued.map(r => `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div class="song-title">${esc(r.song)}</div>
+          ${r.artist ? `<div class="song-artist">${esc(r.artist)}</div>` : ''}
+        </div>
+        <button class="vote-btn ${r.my_vote ? 'voted' : ''}" onclick="vote(${r.id})">▲ ${r.votes}</button>
+      </div>
+    </div>
+  `).join('') : '<p class="muted">No songs in queue yet. Be the first!</p>';
+
+  const playedSection = document.getElementById('playedSection');
+  if (done.length) {
+    playedSection.classList.remove('hidden');
+    document.getElementById('played').innerHTML = done.map(r => `
+      <div class="card">
+        <div class="song-title">${esc(r.song)}</div>
+        ${r.artist ? `<div class="song-artist">${esc(r.artist)}</div>` : ''}
+        <span class="muted">${r.status === 'skipped' ? 'Skipped' : 'Played'}</span>
+      </div>
+    `).join('');
+  } else {
+    playedSection.classList.add('hidden');
+  }
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+async function vote(id) {
+  await fetch('/api/requests/' + id + '/vote', { method: 'POST' });
+  loadRequests();
+}
+
+document.getElementById('submitBtn').addEventListener('click', async () => {
+  const song = document.getElementById('song').value.trim();
+  if (!song) return;
+  const artist = document.getElementById('artist').value.trim();
+  const flash = document.getElementById('flash');
+  const res = await fetch('/api/sessions/' + sessionId + '/requests', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ song, artist: artist || undefined })
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    flash.textContent = err.error;
+    flash.className = 'flash flash-error';
+    flash.classList.remove('hidden');
+    return;
+  }
+  const data = await res.json();
+  if (data.duplicate) {
+    flash.textContent = 'This song was already requested! We added your vote.';
+    flash.className = 'flash flash-info';
+    flash.classList.remove('hidden');
+  } else {
+    flash.classList.add('hidden');
+  }
+  document.getElementById('song').value = '';
+  document.getElementById('artist').value = '';
+  loadRequests();
+});
+
+loadSession();
+setInterval(loadRequests, 5000);
+</script>
+</body>
+</html>
