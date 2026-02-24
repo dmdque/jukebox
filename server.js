@@ -2,6 +2,7 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,6 +16,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     name TEXT,
+    pin TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     active INTEGER DEFAULT 1
   );
@@ -77,7 +79,12 @@ function generateCode() {
 
 function requirePin(req, res, sessionId) {
   const pin = req.headers['x-pin'];
-  if (!pin || sessionPins.get(sessionId) !== pin) {
+  let storedPin = sessionPins.get(sessionId);
+  if (!storedPin) {
+    const session = db.prepare('SELECT pin FROM sessions WHERE id = ?').get(sessionId);
+    if (session?.pin) { storedPin = session.pin; sessionPins.set(sessionId, storedPin); }
+  }
+  if (!pin || storedPin !== pin) {
     res.status(401).json({ error: 'Invalid PIN' });
     return false;
   }
@@ -94,7 +101,7 @@ app.post('/api/sessions', (req, res) => {
   const { name, pin } = req.body;
   if (!pin) return res.status(400).json({ error: 'PIN required' });
   const id = generateCode();
-  db.prepare('INSERT INTO sessions (id, name) VALUES (?, ?)').run(id, name || null);
+  db.prepare('INSERT INTO sessions (id, name, pin) VALUES (?, ?, ?)').run(id, name || null, pin);
   sessionPins.set(id, pin);
   res.json({ id, name });
 });
@@ -212,6 +219,76 @@ app.delete('/api/requests/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-app.listen(PORT, '127.0.0.1', () => {
-  console.log(`Jukebox running at http://127.0.0.1:${PORT}`);
+// Verify PIN (for rejoining)
+app.post('/api/sessions/:id/verify', (req, res) => {
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const { pin } = req.body;
+  // Check memory first, fall back to DB (survives restarts)
+  const storedPin = sessionPins.get(req.params.id) || session.pin;
+  if (!pin || storedPin !== pin) {
+    return res.status(401).json({ error: 'Invalid PIN' });
+  }
+  // Restore to memory cache
+  sessionPins.set(req.params.id, storedPin);
+  res.json({ id: session.id, name: session.name, active: session.active });
+});
+
+// Song search autocomplete (local database)
+const songDB = JSON.parse(fs.readFileSync(path.join(__dirname, 'songs.json'), 'utf8'));
+// Build lowercase index for fast search
+const songIndex = songDB.map(s => ({ s: s.s, a: s.a, lower: `${s.s} ${s.a}`.toLowerCase() }));
+
+app.get('/api/search', (req, res) => {
+  const q = req.query.q?.trim()?.toLowerCase();
+  if (!q || q.length < 2) return res.json([]);
+  
+  const words = q.split(/\s+/);
+  const results = [];
+  for (const entry of songIndex) {
+    if (words.every(w => entry.lower.includes(w))) {
+      results.push({ song: entry.s, artist: entry.a });
+      if (results.length >= 6) break;
+    }
+  }
+  res.json(results);
+});
+
+// Export requests as CSV
+app.get('/api/sessions/:id/export', (req, res) => {
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  
+  const requests = db.prepare(`
+    SELECT song, artist, votes, status, created_at, played_at 
+    FROM requests WHERE session_id = ? 
+    ORDER BY created_at ASC
+  `).all(req.params.id);
+  
+  const header = 'Song,Artist,Votes,Status,Requested At,Played At';
+  const rows = requests.map(r => {
+    const esc = (s) => s ? '"' + String(s).replace(/"/g, '""') + '"' : '';
+    return [esc(r.song), esc(r.artist), r.votes, r.status, r.created_at || '', r.played_at || ''].join(',');
+  });
+  const csv = [header, ...rows].join('\n');
+  
+  const filename = `jukebox-${session.name || session.id}-${session.created_at?.split(' ')[0] || 'export'}.csv`;
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(csv);
+});
+
+// List all sessions (for history view)
+app.get('/api/sessions', (req, res) => {
+  const sessions = db.prepare(`
+    SELECT s.*, COUNT(r.id) as request_count 
+    FROM sessions s LEFT JOIN requests r ON s.id = r.session_id 
+    GROUP BY s.id ORDER BY s.created_at DESC
+  `).all();
+  res.json(sessions);
+});
+
+const HOST = process.env.RAILWAY_ENVIRONMENT ? '0.0.0.0' : '127.0.0.1';
+app.listen(PORT, HOST, () => {
+  console.log(`Jukebox running at http://${HOST}:${PORT}`);
 });

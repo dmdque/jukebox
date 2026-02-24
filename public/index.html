@@ -1,26 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Jukebox</title>
-<link rel="stylesheet" href="/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jukebox</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div class="container" style="text-align:center; padding-top:80px;">
-  <h1>🎵 Jukebox</h1>
-  <p class="muted" style="margin-bottom:24px;">Enter a session code to request songs</p>
-  <form id="joinForm">
-    <input id="code" type="text" placeholder="Session code (e.g. ABC123)" maxlength="6" autocapitalize="characters" style="text-align:center; font-size:1.4rem; letter-spacing:4px;">
-    <button type="submit">Join Session</button>
-  </form>
-  <p class="muted" style="margin-top:32px;">Are you the musician? <a href="/dj.html">Open DJ Dashboard</a></p>
+<div class="page page-center">
+  <span class="logo">♫</span>
+  <h1>Jukebox</h1>
+  <p class="subtitle">Request songs for tonight's set</p>
+  
+  <div style="width:100%;max-width:320px;">
+    <label class="field-label">Session Code</label>
+    <input id="code" type="text" placeholder="ABC123" style="text-align:center;font-size:20px;letter-spacing:4px;text-transform:uppercase;" maxlength="10">
+    <button class="btn btn-primary mt-sm" onclick="go()">Join Session</button>
+    <div id="error" class="flash flash-error hidden mt-md"></div>
+  </div>
+  
+  <div class="divider" style="width:60px;margin:32px auto;"></div>
+  
+  <a href="/dj.html" class="btn-ghost">Musician? Open Dashboard →</a>
 </div>
+
 <script>
-document.getElementById('joinForm').addEventListener('submit', e => {
-  e.preventDefault();
+function go() {
   const code = document.getElementById('code').value.trim().toUpperCase();
-  if (code) window.location.href = '/s/' + code;
+  if (!code) return;
+  window.location.href = '/s/' + code;
+}
+document.getElementById('code').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') go();
 });
 </script>
 </body>

@@ -1,107 +1,146 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Jukebox - Request</title>
-<link rel="stylesheet" href="/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jukebox - Request Songs</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div class="container">
-  <div id="error" class="hidden" style="text-align:center;padding-top:80px;">
-    <h1>😕 Session Not Found</h1>
-    <p class="muted" style="margin-top:12px;"><a href="/">Go back</a></p>
+<div class="page" id="sessionPage">
+
+  <!-- Header -->
+  <div class="text-center mb-md">
+    <h1 id="sessionName"></h1>
+    <p class="text-sm text-muted" id="sessionStatus"></p>
   </div>
-  <div id="main" class="hidden">
-    <h1 id="sessionName">🎵 Jukebox</h1>
-    <div id="nowPlaying" class="card now-playing hidden">
-      <div class="label">Now Playing</div>
-      <div class="song-title" id="npSong"></div>
-      <div class="song-artist" id="npArtist"></div>
-    </div>
-    <div id="requestForm">
-      <div id="flash" class="flash flash-info hidden"></div>
-      <input id="song" type="text" placeholder="Song name *" required>
+
+  <!-- Now Playing -->
+  <div id="nowPlaying" class="now-playing hidden">
+    <div class="label">Now Playing</div>
+    <div class="song-name" id="npSong"></div>
+    <div class="artist-name" id="npArtist"></div>
+  </div>
+
+  <!-- Request Form -->
+  <div id="requestForm">
+    <div id="flash" class="flash flash-info hidden"></div>
+    <div class="card">
+      <h3>Request a Song</h3>
+      <div style="position:relative;">
+        <input id="song" type="text" placeholder="Song name" autocomplete="off">
+        <div id="autocomplete" class="autocomplete hidden"></div>
+      </div>
       <input id="artist" type="text" placeholder="Artist (optional)">
-      <button id="submitBtn" type="button">Request Song</button>
+      <button id="submitBtn" class="btn btn-primary">Request</button>
     </div>
-    <div id="closedMsg" class="card hidden" style="text-align:center;">
-      <p>🚫 Requests are closed</p>
+  </div>
+
+  <!-- Closed Message -->
+  <div id="closedMsg" class="card hidden text-center">
+    <p class="text-muted">Requests are closed for now</p>
+  </div>
+
+  <!-- Queue -->
+  <div class="card card-flush mt-md">
+    <div class="section-header">
+      <h3>Queue</h3>
+      <span class="badge" id="queueCount">0</span>
     </div>
-    <h2 style="margin-top:20px;">Queue</h2>
     <div id="queue"></div>
-    <div class="played-section">
-      <details id="playedSection" class="hidden">
-        <summary class="muted" style="cursor:pointer;">Already Played</summary>
-        <div id="played" style="margin-top:8px;"></div>
-      </details>
-    </div>
+  </div>
+
+  <!-- Played -->
+  <div class="mt-sm">
+    <span class="played-toggle" onclick="togglePlayed()" id="playedToggle" style="display:none;">Show played songs ▸</span>
+    <div id="playedList" class="hidden"></div>
+  </div>
+
+  <!-- Error -->
+  <div id="notFound" class="hidden page-center" style="min-height:60vh;">
+    <span class="logo">🤷</span>
+    <h2>Session not found</h2>
+    <p class="text-muted">Check the code and try again</p>
+    <a href="/" class="btn btn-ghost mt-md">← Back</a>
   </div>
 </div>
-<script>
-const sessionId = window.location.pathname.split('/s/')[1];
-let requests = [];
 
-async function loadSession() {
+<script>
+const sessionId = window.location.pathname.split('/').pop();
+let sessionData = null;
+
+async function init() {
   const res = await fetch('/api/sessions/' + sessionId);
-  if (!res.ok) { document.getElementById('error').classList.remove('hidden'); return; }
-  const s = await res.json();
-  document.getElementById('main').classList.remove('hidden');
-  document.getElementById('sessionName').textContent = s.name || '🎵 Jukebox';
-  if (s.active) {
-    document.getElementById('requestForm').classList.remove('hidden');
-    document.getElementById('closedMsg').classList.add('hidden');
-  } else {
+  if (!res.ok) {
+    document.getElementById('notFound').classList.remove('hidden');
+    document.querySelectorAll('#sessionPage > :not(#notFound)').forEach(el => el.classList.add('hidden'));
+    return;
+  }
+  sessionData = await res.json();
+  document.getElementById('sessionName').textContent = sessionData.name || 'Jukebox';
+  
+  if (!sessionData.active) {
     document.getElementById('requestForm').classList.add('hidden');
     document.getElementById('closedMsg').classList.remove('hidden');
+    document.getElementById('sessionStatus').textContent = 'Requests closed';
+  } else {
+    document.getElementById('sessionStatus').textContent = 'Taking requests';
   }
+  
   loadRequests();
+  setInterval(loadRequests, 5000);
 }
 
 async function loadRequests() {
   const res = await fetch('/api/sessions/' + sessionId + '/requests');
-  requests = await res.json();
-  render();
-}
-
-function render() {
-  const np = requests.find(r => r.status === 'playing');
+  const requests = await res.json();
+  
+  const playing = requests.find(r => r.status === 'playing');
   const queued = requests.filter(r => r.status === 'queued');
-  const done = requests.filter(r => r.status === 'played' || r.status === 'skipped');
+  const played = requests.filter(r => r.status === 'played' || r.status === 'skipped');
 
-  const npEl = document.getElementById('nowPlaying');
-  if (np) {
-    npEl.classList.remove('hidden');
-    document.getElementById('npSong').textContent = np.song;
-    document.getElementById('npArtist').textContent = np.artist || '';
+  // Now playing
+  const npDiv = document.getElementById('nowPlaying');
+  if (playing) {
+    npDiv.classList.remove('hidden');
+    document.getElementById('npSong').textContent = playing.song;
+    document.getElementById('npArtist').textContent = playing.artist || '';
   } else {
-    npEl.classList.add('hidden');
+    npDiv.classList.add('hidden');
   }
 
-  document.getElementById('queue').innerHTML = queued.length ? queued.map(r => `
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div>
+  // Queue
+  document.getElementById('queueCount').textContent = queued.length;
+  const queueDiv = document.getElementById('queue');
+  if (queued.length === 0) {
+    queueDiv.innerHTML = '<div class="empty-state"><span class="icon">🎵</span>No songs yet — be the first!</div>';
+  } else {
+    queueDiv.innerHTML = queued.map(r => `
+      <div class="queue-item">
+        <div class="vote-col">
+          <button class="vote-btn ${r.my_vote ? 'voted' : ''}" onclick="vote(${r.id})">
+            ▲<span class="vote-count">${r.votes}</span>
+          </button>
+        </div>
+        <div class="song-info">
           <div class="song-title">${esc(r.song)}</div>
           ${r.artist ? `<div class="song-artist">${esc(r.artist)}</div>` : ''}
         </div>
-        <button class="vote-btn ${r.my_vote ? 'voted' : ''}" onclick="vote(${r.id})">▲ ${r.votes}</button>
       </div>
-    </div>
-  `).join('') : '<p class="muted">No songs in queue yet. Be the first!</p>';
+    `).join('');
+  }
 
-  const playedSection = document.getElementById('playedSection');
-  if (done.length) {
-    playedSection.classList.remove('hidden');
-    document.getElementById('played').innerHTML = done.map(r => `
-      <div class="card">
-        <div class="song-title">${esc(r.song)}</div>
-        ${r.artist ? `<div class="song-artist">${esc(r.artist)}</div>` : ''}
-        <span class="muted">${r.status === 'skipped' ? 'Skipped' : 'Played'}</span>
+  // Played
+  const playedToggle = document.getElementById('playedToggle');
+  if (played.length > 0) {
+    playedToggle.style.display = 'block';
+    document.getElementById('playedList').innerHTML = played.map(r => `
+      <div class="played-item">
+        <div class="song-title">${esc(r.song)}${r.artist ? ` — ${esc(r.artist)}` : ''}</div>
       </div>
     `).join('');
   } else {
-    playedSection.classList.add('hidden');
+    playedToggle.style.display = 'none';
   }
 }
 
@@ -112,38 +151,85 @@ async function vote(id) {
   loadRequests();
 }
 
+function togglePlayed() {
+  const list = document.getElementById('playedList');
+  const toggle = document.getElementById('playedToggle');
+  if (list.classList.contains('hidden')) {
+    list.classList.remove('hidden');
+    toggle.textContent = 'Hide played songs ▾';
+  } else {
+    list.classList.add('hidden');
+    toggle.textContent = 'Show played songs ▸';
+  }
+}
+
+// Submit
 document.getElementById('submitBtn').addEventListener('click', async () => {
   const song = document.getElementById('song').value.trim();
   if (!song) return;
   const artist = document.getElementById('artist').value.trim();
-  const flash = document.getElementById('flash');
+  
   const res = await fetch('/api/sessions/' + sessionId + '/requests', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ song, artist: artist || undefined })
   });
-  if (!res.ok) {
-    const err = await res.json();
-    flash.textContent = err.error;
-    flash.className = 'flash flash-error';
-    flash.classList.remove('hidden');
-    return;
-  }
+  
   const data = await res.json();
+  const flash = document.getElementById('flash');
+  
   if (data.duplicate) {
-    flash.textContent = 'This song was already requested! We added your vote.';
+    flash.textContent = 'Already requested — added your vote!';
     flash.className = 'flash flash-info';
-    flash.classList.remove('hidden');
+  } else if (data.error) {
+    flash.textContent = data.error;
+    flash.className = 'flash flash-error';
   } else {
-    flash.classList.add('hidden');
+    flash.textContent = 'Song requested!';
+    flash.className = 'flash flash-info';
+    document.getElementById('song').value = '';
+    document.getElementById('artist').value = '';
   }
-  document.getElementById('song').value = '';
-  document.getElementById('artist').value = '';
+  flash.classList.remove('hidden');
+  setTimeout(() => flash.classList.add('hidden'), 3000);
   loadRequests();
 });
 
-loadSession();
-setInterval(loadRequests, 5000);
+// Autocomplete
+let acTimer = null;
+const songInput = document.getElementById('song');
+const acDiv = document.getElementById('autocomplete');
+
+songInput.addEventListener('input', () => {
+  clearTimeout(acTimer);
+  const q = songInput.value.trim();
+  if (q.length < 2) { acDiv.classList.add('hidden'); return; }
+  acTimer = setTimeout(async () => {
+    try {
+      const results = await fetch('/api/search?q=' + encodeURIComponent(q)).then(r => r.json());
+      if (results.length === 0) { acDiv.classList.add('hidden'); return; }
+      acDiv.innerHTML = results.map(r =>
+        `<div class="ac-item" onmousedown="selectSong(this)" data-song="${r.song.replace(/"/g,'&quot;')}" data-artist="${r.artist.replace(/"/g,'&quot;')}">
+          <div class="ac-song">${r.song}</div>
+          <div class="ac-artist">${r.artist}</div>
+        </div>`
+      ).join('');
+      acDiv.classList.remove('hidden');
+    } catch(e) { acDiv.classList.add('hidden'); }
+  }, 300);
+});
+
+songInput.addEventListener('blur', () => {
+  setTimeout(() => acDiv.classList.add('hidden'), 200);
+});
+
+function selectSong(el) {
+  document.getElementById('song').value = el.dataset.song;
+  document.getElementById('artist').value = el.dataset.artist;
+  acDiv.classList.add('hidden');
+}
+
+init();
 </script>
 </body>
 </html>

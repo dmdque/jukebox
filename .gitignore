@@ -1,1 +1,5 @@
-node_modules/\njukebox.db
+node_modules/
+jukebox.db
+jukebox.db-shm
+jukebox.db-wal
+public/screenshot-*.png
